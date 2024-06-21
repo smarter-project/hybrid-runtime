@@ -35,8 +35,7 @@ pub const FIRMWARE_FILE: &str = "firmware";
 pub const OVERLAYFS: &str = "/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs";
 pub const SNAPSHOT_DB: &str = "metadata.db";
 pub const HYBRID_DIR: &str = "/var/lib/hybrid-runtime";
-// Need to change the path
-pub const CONSOLE_RPMSG: &str = "/home/root/cortexm_console";
+pub const CONSOLE_RPMSG: &str = "/usr/local/bin/cortexm_console";
 pub const BOARD: &str = "/sys/firmware/devicetree/base/model";
 pub const MCU: &str = "name";
 
