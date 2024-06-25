@@ -7,6 +7,13 @@ VOLUME_SHIM = -v $(abspath $(SHIM_ROOT)):$(WORKDIR)
 RUNTIME_DOCKERFILE = runtime.dockerfile
 RUNTIME_IMAGE = runtime-image
 BUILD_CMD = cargo build --target aarch64-unknown-linux-musl
+IMAGE_DOCKERFILE= image.dockerfile
+IMAGE_NAME = hello_world_imx8mp:latest
+GITHUB= ghcr.io/smarter-project/hybrid-runtime
+
+
+image: image.dockerfile
+	docker build  ${BUILD_ARGS} -t $(GITHUB)/${IMAGE_NAME} -f ${IMAGE_DOCKERFILE} .
 
 runtime-build: runtime.dockerfile
 	docker build -t $(RUNTIME_IMAGE) -f $(RUNTIME_DOCKERFILE) .
