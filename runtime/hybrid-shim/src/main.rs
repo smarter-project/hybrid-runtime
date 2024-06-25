@@ -37,7 +37,7 @@ pub const REMOTEPROC: &str = "/sys/class/remoteproc";
 pub const STATE_FILE: &str = "state";
 pub const FIRMWARE_FILE: &str = "firmware";
 pub const HYBRID_DIR: &str = "/var/lib/hybrid-runtime";
-pub const CONSOLE_RPMSG: &str = "/home/root/cortexm_console";
+pub const CONSOLE_RPMSG: &str = "/usr/local/bin/cortexm_console";
 pub const BOARD: &str = "/sys/firmware/devicetree/base/model";
 pub const MCU: &str = "name";
 
