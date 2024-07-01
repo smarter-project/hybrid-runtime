@@ -12,6 +12,6 @@ ENV CC_aarch64_unknown_linux_musl="aarch64-linux-musl-gcc"  \
 
 WORKDIR ../runtime/hybrid-shim
 
-cargo build --target aarch64-unknown-linux-musl
+RUN cargo build --target aarch64-unknown-linux-musl
 
-COPY runtime/hybrid-shim/target/aarch64-unknown-linux-musl/debug/containerd-shim-containerd-hybrid /github/workspace
+COPY target/aarch64-unknown-linux-musl/debug/containerd-shim-containerd-hybrid /github/workspace
