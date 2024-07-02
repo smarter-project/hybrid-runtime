@@ -10,8 +10,3 @@ ENV CC_aarch64_unknown_linux_musl="aarch64-linux-musl-gcc"  \
 	AR_aarch64_unknown_linux_musl="aarch64-linux-musl-ar"  \ 
 	CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-Clink-self-contained=yes -Clinker=rust-lld"
 
-WORKDIR ../runtime/hybrid-shim
-
-RUN cargo build --target aarch64-unknown-linux-musl
-
-COPY target/aarch64-unknown-linux-musl/debug/containerd-shim-containerd-hybrid /github/workspace
