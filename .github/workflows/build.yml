@@ -41,8 +41,24 @@ jobs:
         with:
           name: myimage
           path: /tmp
-      
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Load image
         run: |
           docker load --input /tmp/myimage.tar
-          docker image ls -a          
+          docker run --init --rm -v ${GITHUB_WORKSPACE}/runtime/shim:/runtime -w /runtime myimage cargo build --target aarch64-unknown-linux-musl
+          docker run --init --rm -v ${GITHUB_WORKSPACE}/runtime/runtime:/runtime -w /runtime myimage cargo build --target aarch64-unknown-linux-musl          
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: hybrid
+          path: | 
+              runtime/hybridshim/target/aarch64-unknown-linux-musl/debug/containerd-shim-containerd-hybrid
+              runtime/hybridruntime/target/aarch64-unknown-linux-musl/debug/hybrid-cli
+              runtime/pause.sh
+              runtime/resize.sh
+            
+
