@@ -1,8 +1,8 @@
 PLATFORM = linux/arm64
-RUNTIME_ROOT = ../runtime/hybrid-runtime
+RUNTIME_ROOT = ../runtime/runtime
 WORKDIR = /runtime
 VOLUME_RUNTIME = -v $(abspath $(RUNTIME_ROOT)):$(WORKDIR)
-SHIM_ROOT = ../runtime/hybrid-shim
+SHIM_ROOT = ../runtime/shim
 VOLUME_SHIM = -v $(abspath $(SHIM_ROOT)):$(WORKDIR)
 RUNTIME_DOCKERFILE = runtime.dockerfile
 RUNTIME_IMAGE = runtime-image
@@ -25,3 +25,4 @@ shim: runtime.dockerfile
 	docker run --init --rm $(VOLUME_SHIM) -w $(WORKDIR) $(RUNTIME_IMAGE) $(BUILD_CMD)
 
 all: runtime-run shim
+

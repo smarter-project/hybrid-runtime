@@ -1,4 +1,4 @@
-runtime/hybrid-runtime/target
-runtime/hybrid-runtime/Cargo.lock
-runtime/hybrid-shim/target
-runtime/hybrid-shim/Cargo.lock
+runtime/runtime/target
+runtime/runtime/Cargo.lock
+runtime/shim/target
+runtime/shim/Cargo.lock
