@@ -51,10 +51,11 @@ jobs:
 
       - name: Tar release
         run: |
-          tar -czvf hybrid.tar.gz -C ${{ github.workspace }}/runtime/shim/target/aarch64-unknown-linux-musl/debug containerd-shim-containerd-hybrid
-          tar -rzvf hybrid.tar.gz -C ${{ github.workspace }}/runtime/runtime/target/aarch64-unknown-linux-musl/debug hybrid-cli
-          tar -rzvf hybrid.tar.gz -C ${{ github.workspace }}/runtime pause.sh resize.sh
-
+          tar -cvf hybrid.tar -C ${{ github.workspace }}/runtime/shim/target/aarch64-unknown-linux-musl/debug containerd-shim-containerd-hybrid
+          tar -rvf hybrid.tar -C ${{ github.workspace }}/runtime/runtime/target/aarch64-unknown-linux-musl/debug hybrid-cli
+          tar -rvf hybrid.tar -C ${{ github.workspace }}/runtime pause.sh resize.sh
+          gzip hybrid.tar
+          
 #      - name: Upload artifact
 #        uses: actions/upload-artifact@v4
 #        with:
