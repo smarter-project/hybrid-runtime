@@ -54,8 +54,8 @@ jobs:
         with:
           name: hybrid
           path: |
-              ${{ github.workspace }}/runtime/runtime/shim/target/aarch64-unknown-linux-musl/debug/containerd-shim-containerd-hybrid
-              ${{ github.workspace }}//runtime/runtime/runtime/target/aarch64-unknown-linux-musl/debug/hybrid-cli
-              ${{ github.workspace }}/runtime/runtime/pause.sh
-              ${{ github.workspace }}/runtime/runtime/resize.sh     
+              ${{ github.workspace }}/runtime/shim/target/aarch64-unknown-linux-musl/debug/containerd-shim-containerd-hybrid
+              ${{ github.workspace }}/runtime/runtime/target/aarch64-unknown-linux-musl/debug/hybrid-cli
+              ${{ github.workspace }}/runtime/pause.sh
+              ${{ github.workspace }}/runtime/resize.sh     
 
