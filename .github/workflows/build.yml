@@ -42,7 +42,7 @@ jobs:
         uses: addnab/docker-run-action@v3
         with:
           image: myimage:latest
-          options: -v ${{ github.workspace }}/runtime:/runtime -w /runtime/runtime/runtime
+          options: -v ${{ github.workspace }}:/runtime -w /runtime/runtime/runtime
           run: |
             cargo build --target aarch64-unknown-linux-musl
             ls -l /runtime/runtime/runtime/target/            
