@@ -24,19 +24,19 @@ jobs:
           push: false          
           load: true
 
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
- 
-      - name: build binary
-        uses: addnab/docker-run-action@v3
-        with:
-          image: myimage:latest
-          options: -v ${{ github.workspace }}:/runtime -w /runtime/runtime/shim          
-          run: |
-             cargo build --target aarch64-unknown-linux-musl
-             ls -l /runtime/runtime/shim/target/
- 
+#
+#      - name: Checkout repository
+#        uses: actions/checkout@v4
+# 
+#      - name: build binary
+#        uses: addnab/docker-run-action@v3
+#        with:
+#          image: myimage:latest
+#          options: -v ${{ github.workspace }}:/runtime -w /runtime/runtime/shim          
+#          run: |
+#             cargo build --target aarch64-unknown-linux-musl
+#             ls -l /runtime/runtime/shim/target/
+# 
 
       - name: build binary
         uses: addnab/docker-run-action@v3
