@@ -9,13 +9,10 @@ on:
 #push:
 #    branches: ['main']
 
-
-
 jobs:
   build3:
     runs-on: ubuntu-latest
     steps:
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
@@ -28,24 +25,24 @@ jobs:
           load: true
 
 
-     - name: Checkout repository
-       uses: actions/checkout@v4
-
-     - name: build binary
-       uses: addnab/docker-run-action@v3
-       with:
-         image: myimage:latest
-         options: -v ${{ github.workspace }}:/runtime -w /runtime/runtime/shim          
-         run: |
-            cargo build --target aarch64-unknown-linux-musl
-            ls -l /runtime/runtime/shim/target/
-
-     - name: check binaries
-       run: |
-          pwd
-          echo ${{ github.workspace }}
-          ls -l ${{ github.workspace }}/runtime/shim
-      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+ 
+      - name: build binary
+        uses: addnab/docker-run-action@v3
+        with:
+          image: myimage:latest
+          options: -v ${{ github.workspace }}:/runtime -w /runtime/runtime/shim          
+          run: |
+             cargo build --target aarch64-unknown-linux-musl
+             ls -l /runtime/runtime/shim/target/
+ 
+      - name: check binaries
+        run: |
+           pwd
+           echo ${{ github.workspace }}
+           ls -l ${{ github.workspace }}/runtime/shim
+       
 
 
 #      - name: build binary
