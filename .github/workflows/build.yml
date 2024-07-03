@@ -37,29 +37,24 @@ jobs:
              cargo build --target aarch64-unknown-linux-musl
              ls -l /runtime/runtime/shim/target/
  
-      - name: check binaries
-        run: |
-           pwd
-           echo ${{ github.workspace }}
-           ls -l ${{ github.workspace }}/runtime/shim
-       
+
+      - name: build binary
+        uses: addnab/docker-run-action@v3
+        with:
+          image: myimage:latest
+          options: -v ${{ github.workspace }}/runtime:/runtime -w /runtime/runtime/runtime
+          run: |
+            cargo build --target aarch64-unknown-linux-musl
+            ls -l /runtime/runtime/runtime/target/            
 
 
-#      - name: build binary
-#        uses: addnab/docker-run-action@v3
-#        with:
-#          image: myimage:latest
-#          options: -v ${{ github.workspace }}/runtime/runtime:/runtime -w /runtime
-#          run: |
-#            cargo build --target aarch64-unknown-linux-musl
-#
-#      - name: Upload artifact
-#        uses: actions/upload-artifact@v3
-#        with:
-#          name: hybrid
-#          path: | 
-#              ${{ github.workspace }}/runtime/shim/target/aarch64-unknown-linux-musl/debug/containerd-shim-containerd-hybrid
-#              ${{ github.workspace }}/runtime/runtime/target/aarch64-unknown-linux-musl/debug/hybrid-cli
-#              ${{ github.workspace }}/runtime/pause.sh
-#              ${{ github.workspace }}/runtime/resize.sh     
-#
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: hybrid
+          path: |
+              ${{ github.workspace }}/runtime/shim/target/aarch64-unknown-linux-musl/debug/containerd-shim-containerd-hybrid
+              ${{ github.workspace }}/runtime/runtime/target/aarch64-unknown-linux-musl/debug/hybrid-cli
+              ${{ github.workspace }}/runtime/pause.sh
+              ${{ github.workspace }}/runtime/resize.sh     
+
