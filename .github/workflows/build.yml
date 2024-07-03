@@ -24,19 +24,19 @@ jobs:
           push: false          
           load: true
 
-#
-#      - name: Checkout repository
-#        uses: actions/checkout@v4
-# 
-#      - name: build binary
-#        uses: addnab/docker-run-action@v3
-#        with:
-#          image: myimage:latest
-#          options: -v ${{ github.workspace }}:/runtime -w /runtime/runtime/shim          
-#          run: |
-#             cargo build --target aarch64-unknown-linux-musl
-#             ls -l /runtime/runtime/shim/target/
-# 
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+ 
+      - name: build binary
+        uses: addnab/docker-run-action@v3
+        with:
+          image: myimage:latest
+          options: -v ${{ github.workspace }}:/runtime -w /runtime/runtime/shim          
+          run: |
+             cargo build --target aarch64-unknown-linux-musl
+             ls -l /runtime/runtime/shim/target/
+ 
 
       - name: build binary
         uses: addnab/docker-run-action@v3
@@ -54,8 +54,8 @@ jobs:
         with:
           name: hybrid
           path: |
-              ${{ github.workspace }}/runtime/shim/target/aarch64-unknown-linux-musl/debug/containerd-shim-containerd-hybrid
-              ${{ github.workspace }}/runtime/runtime/target/aarch64-unknown-linux-musl/debug/hybrid-cli
-              ${{ github.workspace }}/runtime/pause.sh
-              ${{ github.workspace }}/runtime/resize.sh     
+              ${{ github.workspace }}/runtime/runtime/shim/target/aarch64-unknown-linux-musl/debug/containerd-shim-containerd-hybrid
+              ${{ github.workspace }}//runtime/runtime/runtime/target/aarch64-unknown-linux-musl/debug/hybrid-cli
+              ${{ github.workspace }}/runtime/runtime/pause.sh
+              ${{ github.workspace }}/runtime/runtime/resize.sh     
 
