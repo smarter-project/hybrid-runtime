@@ -45,7 +45,8 @@ jobs:
           options: -v ${{ github.workspace }}:/runtime -w /runtime/runtime/runtime
           run: |
             cargo build --target aarch64-unknown-linux-musl
-            ls -l /runtime/runtime/runtime/target/            
+            ls -l /runtime
+            ls -l /runtime/runtime
 
 
       - name: Upload artifact
