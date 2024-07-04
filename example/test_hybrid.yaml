@@ -1,0 +1,12 @@
+kind: Pod
+apiVersion: v1
+metadata:
+  name: example3
+  labels:
+    k3s-app: example3
+spec:
+    runtimeClassName: hybrid          
+    containers:
+      - name: example-hybrid-pod3
+        image: ghcr.io/smarter-project/smart-camera-hybrid-application/hybrid_app_imx8mp:latest
+        imagePullPolicy: IfNotPresent

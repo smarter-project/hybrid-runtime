@@ -1,0 +1,26 @@
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: example
+  labels:
+    k3s-app: example
+spec:
+  selector:
+    matchLabels:
+      name: example
+  template:
+    metadata:
+      labels:
+        name: example
+    spec:
+      tolerations:
+        - key: "smarter.type"
+          operator: "Equal"
+          value: "edge"
+          effect: "NoSchedule"
+      hostname: exampleh
+      containers:
+      - name: example-dummy-pod
+        image: alpine
+        command: ["/bin/ash", "-ec", "while :; do date; sleep 5 ; done"]
+
