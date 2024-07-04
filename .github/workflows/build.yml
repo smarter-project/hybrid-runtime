@@ -16,55 +16,76 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
-      - name: Build and export
-        uses: docker/build-push-action@v6
-        with:
-          file: docker/runtime.dockerfile
-          tags: myimage:latest
-          push: false          
-          load: true
-
+#      - name: Build and export
+#        uses: docker/build-push-action@v6
+#        with:
+#          file: docker/runtime.dockerfile
+#          tags: myimage:latest
+#          push: false          
+#          load: true
+#
 
       - name: Checkout repository
         uses: actions/checkout@v4
- 
-      - name: build binary
-        uses: addnab/docker-run-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
         with:
-          image: myimage:latest
-          options: -v ${{ github.workspace }}:/runtime -w /runtime/runtime/shim          
-          run: |
-             cargo build --target aarch64-unknown-linux-musl
-             ls -l /runtime/runtime/shim/target/
- 
-
-      - name: build binary
-        uses: addnab/docker-run-action@v3
-        with:
-          image: myimage:latest
-          options: -v ${{ github.workspace }}:/runtime -w /runtime/runtime/runtime
-          run: |
-            cargo build --target aarch64-unknown-linux-musl
-            ls -l /runtime
-            ls -l /runtime/runtime
-
-
-      - name: Tar release
-        run: |
-          tar -cvf hybrid.tar -C ${{ github.workspace }}/runtime/shim/target/aarch64-unknown-linux-musl/debug containerd-shim-containerd-hybrid
-          tar -rvf hybrid.tar -C ${{ github.workspace }}/runtime/runtime/target/aarch64-unknown-linux-musl/debug hybrid-cli
-          tar -rvf hybrid.tar -C ${{ github.workspace }}/runtime pause.sh resize.sh
-          gzip hybrid.tar
+          context: cortexm_console
+          file: cortexm_console/Dockerfile
+          platforms: linux/arm64
+          tags: mybuild:latest
+          push: false
+          load: true
           
-#      - name: Upload artifact
-#        uses: actions/upload-artifact@v4
-#        with:
-#          name: hybrid_release
-#          path: hybrid.tar
-#
-
-      - name: Release with Notes
-        uses: softprops/action-gh-release@v1
+      - uses: shrink/actions-docker-extract@v3
+        id: extract
         with:
-          files: |
-            hybrid.tar.gz
+          image: mybuild:latest
+          path: /cortexm_console
+          destination: dist
+
+#
+#
+#
+#      - name: build binary
+#        uses: addnab/docker-run-action@v3
+#        with:
+#          image: myimage:latest
+#          options: -v ${{ github.workspace }}:/runtime -w /runtime/runtime/shim          
+#          run: |
+#             cargo build --target aarch64-unknown-linux-musl
+#             ls -l /runtime/runtime/shim/target/
+# 
+#
+#      - name: build binary
+#        uses: addnab/docker-run-action@v3
+#        with:
+#          image: myimage:latest
+#          options: -v ${{ github.workspace }}:/runtime -w /runtime/runtime/runtime
+#          run: |
+#            cargo build --target aarch64-unknown-linux-musl
+#            ls -l /runtime
+#            ls -l /runtime/runtime
+#
+#
+#      - name: Tar release
+#        run: |
+#          tar -cvf hybrid.tar -C ${{ github.workspace }}/runtime/shim/target/aarch64-unknown-linux-musl/debug containerd-shim-containerd-hybrid
+#          tar -rvf hybrid.tar -C ${{ github.workspace }}/runtime/runtime/target/aarch64-unknown-linux-musl/debug hybrid-cli
+#          tar -rvf hybrid.tar -C ${{ github.workspace }}/runtime pause.sh resize.sh
+#          gzip hybrid.tar
+#          
+##      - name: Upload artifact
+##        uses: actions/upload-artifact@v4
+##        with:
+##          name: hybrid_release
+##          path: hybrid.tar
+##
+#
+#      - name: Release with Notes
+#        uses: softprops/action-gh-release@v1
+#        with:
+#          files: |
+#            hybrid.tar.gz
+#
