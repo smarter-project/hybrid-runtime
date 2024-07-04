@@ -6,5 +6,5 @@ RUN gcc -o cortexm_console cortexm_console.c
 
 FROM scratch
 COPY --from=builder cortexm_console /
-
+ENTRYPOINT /cortexm_console
 
