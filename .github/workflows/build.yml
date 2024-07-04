@@ -53,7 +53,6 @@ jobs:
           options: -v ${{ github.workspace }}:/runtime -w /runtime/runtime/shim          
           run: |
              cargo build --target aarch64-unknown-linux-musl
-             ls -l /runtime/runtime/shim/target/
  
 
       - name: build binary
@@ -63,16 +62,13 @@ jobs:
           options: -v ${{ github.workspace }}:/runtime -w /runtime/runtime/runtime
           run: |
             cargo build --target aarch64-unknown-linux-musl
-            ls -l /runtime
-            ls -l /runtime/runtime
-
 
       - name: Tar release
         run: |
           tar -cvf hybrid.tar -C ${{ github.workspace }}/runtime/shim/target/aarch64-unknown-linux-musl/debug containerd-shim-containerd-hybrid
           tar -rvf hybrid.tar -C ${{ github.workspace }}/runtime/runtime/target/aarch64-unknown-linux-musl/debug hybrid-cli
           tar -rvf hybrid.tar -C ${{ github.workspace }}/runtime pause.sh resize.sh
-          tar -cvf hybrid.tar -C ${{ github.workspace }}/dist cortexm_console          
+          tar -rvf hybrid.tar -C ${{ github.workspace }}/dist cortexm_console          
           gzip hybrid.tar
           
       - name: Release with Notes
