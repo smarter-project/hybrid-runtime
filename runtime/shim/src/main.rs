@@ -1,4 +1,3 @@
-//#[cfg(not(feature = "async"))]
 use crate::utils::{change_status, check_mcu_exists, check_status, read_info, FirmwareStatus};
 use containerd_client;
 use containerd_client::services::v1::{
@@ -25,7 +24,8 @@ use shim::{
     Config, Context, ExitSignal, Flags, TtrpcContext, TtrpcResult,
 };
 use std::collections::HashMap;
-use std::fs::{create_dir_all, read_to_string, remove_dir_all, write, File};
+use std::fs::{create_dir_all, read_to_string, remove_dir_all, remove_file, write, File};
+use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use time::OffsetDateTime;
@@ -37,7 +37,7 @@ pub const REMOTEPROC: &str = "/sys/class/remoteproc";
 pub const STATE_FILE: &str = "state";
 pub const FIRMWARE_FILE: &str = "firmware";
 pub const HYBRID_DIR: &str = "/var/lib/hybrid-runtime";
-pub const CONSOLE_RPMSG: &str = "/usr/local/bin/cortexm_console";
+pub const CONSOLE_RPMSG: &str = "/home/root/cortexm_console";
 pub const BOARD: &str = "/sys/firmware/devicetree/base/model";
 pub const MCU: &str = "name";
 
@@ -85,7 +85,6 @@ impl shim::Task for Service {
         _ctx: &TtrpcContext,
         request: CreateTaskRequest,
     ) -> TtrpcResult<CreateTaskResponse> {
-        
         let ns = self.namespace.clone();
         let address = self.address.clone();
         let container_id: &str = request.id.as_str();
@@ -119,234 +118,249 @@ impl shim::Task for Service {
         for line in pid_file.lines() {
             pid = line.parse::<u32>().unwrap() + 10;
         }
+        create_dir_all(format!("{HYBRID_DIR}/{}", container_id))
+            .expect("Failed to create container folder.");
+
         let mut resp = CreateTaskResponse::new();
         info!("create a container using hybrid-runtime.");
-        // Hack: check if it's a pause container
+        // k3s Hack: check if it's a pause container
         // name: docker.io/rancher/mirrored-pause:3.6
         if name.contains("pause") {
             info!("found a pause container");
+            // delete the pause container that was created using the hybrid-runtime
             std::process::Command::new("ctr")
                 .arg("c")
                 .arg("rm")
                 .arg(container_id.to_string())
                 .spawn()
                 .expect("failed to execute process");
-            info!("test");
+            // create a new pause container using runc wiht the same ID
             std::process::Command::new("/usr/local/bin/pause.sh")
                 .arg(name)
                 .arg(container_id.to_string())
                 .spawn()
                 .expect("failed to execute process");
-            
+            // get the actual pid of the container
+            let cmd = format!("ps aux | grep {} | awk", container_id.to_string()) + " '{print $1}'";
+            let output = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(cmd)
+                .output()
+                .expect("Failed to execute command");
+            let output = String::from_utf8(output.stdout).unwrap();
+            let output = output.split('\n').next().unwrap();
+            write(format!("{HYBRID_DIR}/{}/pause", container_id), output)
+                .expect("Unable to write firmware name to file.");
+            resp.pid = output.parse::<u32>().unwrap();
+            write(format!("{HYBRID_DIR}/{}/status", container_id), "RUNNING")
+                .expect("Unable to write status to file.");
+            let _ = write(format!("{HYBRID_DIR}/{}/pid", container_id), output);
             info!("create {:?}", resp);
             Ok(resp)
         } else {
+            // create hybrid container
+            let req = GetImageRequest {
+                name: name.to_string(),
+            };
 
-        let req = GetImageRequest {
-            name: name.to_string(),
-        };
+            let req: Request<GetImageRequest> = with_namespace!(req, ns);
+            let image = ImagesClient::new(channel.clone())
+                .get(req)
+                .await
+                .expect("failed to get image")
+                .into_inner()
+                .image
+                .unwrap();
 
-        let req: Request<GetImageRequest> = with_namespace!(req, ns);
-        let image = ImagesClient::new(channel.clone())
-            .get(req)
-            .await
-            .expect("failed to get image")
-            .into_inner()
-            .image
-            .unwrap();
+            let digest = image.target.unwrap().digest;
+            let req = ReadContentRequest {
+                digest,
+                ..Default::default()
+            };
+            let req: Request<ReadContentRequest> = with_namespace!(req, ns);
+            let manifest = ContentClient::new(channel.clone())
+                .read(req)
+                .await
+                .expect("Failed to get content from digest")
+                .into_inner()
+                .map_ok(|msg| msg.data)
+                .try_concat()
+                .await
+                .expect("Failed to get manifest from digest");
 
-        let digest = image.target.unwrap().digest;
-        let req = ReadContentRequest {
-            digest,
-            ..Default::default()
-        };
-        let req: Request<ReadContentRequest> = with_namespace!(req, ns);
-        let manifest = ContentClient::new(channel.clone())
-            .read(req)
-            .await
-            .expect("Failed to get content from digest")
-            .into_inner()
-            .map_ok(|msg| msg.data)
-            .try_concat()
-            .await
-            .expect("Failed to get manifest from digest");
+            let manifest = manifest.as_slice();
 
-        let manifest = manifest.as_slice();
-
-        match ImageManifest::from_reader(manifest) {
-            Ok(manifest) => {
-                // Image config: contains rootfs hash and labels
-                // for shim I only need to extract labels
-                let req = ReadContentRequest {
-                    digest: manifest.config().digest().to_string(),
-                    ..Default::default()
-                };
-                let req: Request<ReadContentRequest> = with_namespace!(req, ns);
-                let content = ContentClient::new(channel.clone())
-                    .read(req)
-                    .await
-                    .expect("couldnt read blob content")
-                    .into_inner()
-                    .map_ok(|msg| msg.data)
-                    .try_concat()
-                    .await
-                    .expect("couldnt read blob content");
-                let content = content.as_slice();
-                match ImageConfiguration::from_reader(content) {
-                    Ok(content) => {
-                        match content.config() {
-                            Some(config) => {
-                                match config.entrypoint() {
-                                    Some(entrypoint) => {
-                                        // I could get the firmaware name from firmware path
-                                        // entrypoint not necessary
-                                        container_labels.insert(
-                                            "Firmware name".to_string(),
-                                            entrypoint[0].clone(),
-                                        );
-                                    }
-                                    //_ => return Err("No entrypoint specified".to_string()),
-                                    _ => panic!("No entrypoint specified"),
-                                };
-                                match config.labels() {
-                                    Some(labels) => {
-                                        match labels.get("board") {
-                                            Some(board) => {
-                                                let f = read_to_string(format!("{BOARD}")).unwrap();
-                                                let board_file = f.trim_matches(char::from(0));
-                                                for line in board_file.lines() {
-                                                    if line == board {
-                                                        container_labels.insert(
-                                                            "Board".to_string(),
-                                                            board.to_string(),
-                                                        );
-                                                    } else {
-                                                        panic!("Image board name label does not match the current board");
-                                                        //return Err("Image board name label does not match the current board".to_string());
+            match ImageManifest::from_reader(manifest) {
+                Ok(manifest) => {
+                    let req = ReadContentRequest {
+                        digest: manifest.config().digest().to_string(),
+                        ..Default::default()
+                    };
+                    let req: Request<ReadContentRequest> = with_namespace!(req, ns);
+                    let content = ContentClient::new(channel.clone())
+                        .read(req)
+                        .await
+                        .expect("couldnt read blob content")
+                        .into_inner()
+                        .map_ok(|msg| msg.data)
+                        .try_concat()
+                        .await
+                        .expect("couldnt read blob content");
+                    let content = content.as_slice();
+                    match ImageConfiguration::from_reader(content) {
+                        Ok(content) => {
+                            match content.config() {
+                                Some(config) => {
+                                    match config.entrypoint() {
+                                        Some(entrypoint) => {
+                                            container_labels.insert(
+                                                "Firmware name".to_string(),
+                                                entrypoint[0].clone(),
+                                            );
+                                        }
+                                        _ => panic!("No entrypoint specified"),
+                                    };
+                                    match config.labels() {
+                                        Some(labels) => {
+                                            match labels.get("board") {
+                                                Some(board) => {
+                                                    let f =
+                                                        read_to_string(format!("{BOARD}")).unwrap();
+                                                    let board_file = f.trim_matches(char::from(0));
+                                                    for line in board_file.lines() {
+                                                        if line == board {
+                                                            container_labels.insert(
+                                                                "Board".to_string(),
+                                                                board.to_string(),
+                                                            );
+                                                        } else {
+                                                            panic!("Image board name label does not match the current board");
+                                                            //return Err("Image board name label does not match the current board".to_string());
+                                                        }
                                                     }
                                                 }
-                                            }
-                                            None => {
-                                                panic!("board label not set in container image.");
-                                                // return Err("Board label not set in container image."
-                                                //     .to_string())
-                                            }
-                                        };
-                                        match labels.get("mcu") {
-                                            Some(mcu_label) => {
-                                                let mcu_path =
-                                                    match check_mcu_exists(REMOTEPROC, mcu_label) {
+                                                None => {
+                                                    panic!(
+                                                        "board label not set in container image."
+                                                    );
+                                                    // return Err("Board label not set in container image."
+                                                    //     .to_string())
+                                                }
+                                            };
+                                            match labels.get("mcu") {
+                                                Some(mcu_label) => {
+                                                    let mcu_path = match check_mcu_exists(
+                                                        REMOTEPROC, mcu_label,
+                                                    ) {
                                                         Ok(mcu_path) => mcu_path,
                                                         Err(e) => panic!("{:?}", e), //return Err(e),
                                                     };
-                                                container_labels.insert(
-                                                    "MCU path".to_string(),
-                                                    mcu_path.to_string(),
-                                                );
-                                                container_labels.insert(
-                                                    "MCU name".to_string(),
-                                                    mcu_label.to_string(),
-                                                );
-                                            }
-                                            _ => {
-                                                //return Err(
-                                                //    "MCU label not set in container image.".to_string()
-                                                //)
-                                                panic!("MCU label not set in container image.");
-                                            }
-                                        };
-                                    }
-                                    _ => {
-                                        /*return Err(
-                                            "No labels specified. Can't match board name and MCU."
-                                                .to_string(),
-                                        )*/
-                                        panic!(
-                                            "no labels specified. can't match board naem and MCU."
-                                        );
-                                    }
-                                };
-                            }
-                            None => panic!("couldn't find config."), //return Err("Couldnt find config".to_string()),
-                        };
+                                                    container_labels.insert(
+                                                        "MCU path".to_string(),
+                                                        mcu_path.to_string(),
+                                                    );
+                                                    container_labels.insert(
+                                                        "MCU name".to_string(),
+                                                        mcu_label.to_string(),
+                                                    );
+                                                }
+                                                _ => {
+                                                    //return Err(
+                                                    //    "MCU label not set in container image.".to_string()
+                                                    //)
+                                                    panic!("MCU label not set in container image.");
+                                                }
+                                            };
+                                        }
+                                        _ => {
+                                            /*return Err(
+                                                "No labels specified. Can't match board name and MCU."
+                                                    .to_string(),
+                                            )*/
+                                            panic!(
+                                                "no labels specified. can't match board naem and MCU."
+                                            );
+                                        }
+                                    };
+                                }
+                                None => panic!("couldn't find config."), //return Err("Couldnt find config".to_string()),
+                            };
+                        }
+                        Err(_) => panic!("couldn't read blob content."), //return Err("couldnt read blob content".to_string()),
                     }
-                    Err(_) => panic!("couldn't read blob content."), //return Err("couldnt read blob content".to_string()),
+                    // need to update where remoteproc looks for firmware
+                    write(REMOTEPROC_PATH, firmware_path)
+                        .expect("Couldn't update firmware default location.");
+                    container_labels.insert("Firmware path".to_string(), firmware_path.to_string());
                 }
-                // need to update where remoteproc looks for firmware
-                write(REMOTEPROC_PATH, firmware_path)
-                    .expect("Couldn't update firmware default location.");
-                container_labels.insert("Firmware path".to_string(), firmware_path.to_string());
+                Err(_) => panic!("failed to read image manifest."), //return Err("failed to read image manifest".to_string()),
             }
-            Err(_) => panic!("failed to read image manifest."), //return Err("failed to read image manifest".to_string()),
-        }
 
-        // update current container
-        let container = Container {
-            labels: container_labels,
-            ..current_container
-        };
+            // update current container
+            let container = Container {
+                labels: container_labels,
+                ..current_container
+            };
 
-        let req = UpdateContainerRequest {
-            container: Some(container.clone()),
-            update_mask: None,
-        };
-        let req: Request<UpdateContainerRequest> = with_namespace!(req, ns);
-        let _resp = ContainersClient::new(channel.clone())
-            .update(req)
-            .await
-            .expect("failed to update current container")
-            .into_inner();
+            let req = UpdateContainerRequest {
+                container: Some(container.clone()),
+                update_mask: None,
+            };
+            let req: Request<UpdateContainerRequest> = with_namespace!(req, ns);
+            let _resp = ContainersClient::new(channel.clone())
+                .update(req)
+                .await
+                .expect("failed to update current container")
+                .into_inner();
 
-        // create dir for the container under /var/lib/hybrid-runtime/{container_id}
-        create_dir_all(format!("{HYBRID_DIR}/{}", container_id))
-            .expect("Failed to create container folder.");
+            let ttrpc_address = address + ".ttrpc";
+            let publisher = RemotePublisher::new(ttrpc_address).expect("Connect failed");
 
-        
-        let ttrpc_address = address + ".ttrpc";
-        let publisher =
-            RemotePublisher::new(ttrpc_address).expect("Connect failed");
-
-        let task = TaskCreate {
-            container_id: container_id.to_string(),
-            bundle: request.bundle,
-            rootfs: request.rootfs,
-            io: Some(TaskIO {
-                stdin: request.stdin.to_string(),
-                stdout: request.stdout.to_string(),
-                stderr: request.stderr.to_string(),
-                terminal: request.terminal,
+            let task = TaskCreate {
+                container_id: container_id.to_string(),
+                bundle: request.bundle,
+                rootfs: request.rootfs,
+                io: Some(TaskIO {
+                    stdin: request.stdin.to_string(),
+                    stdout: request.stdout.to_string(),
+                    stderr: request.stderr.to_string(),
+                    terminal: request.terminal,
+                    ..Default::default()
+                })
+                .into(),
+                checkpoint: request.checkpoint.to_string(),
+                pid: pid,
                 ..Default::default()
-            })
-            .into(),
-            checkpoint: request.checkpoint.to_string(),
-            pid: pid,
-            ..Default::default()
-        };
-        write(format!("{HYBRID_DIR}/{}/status", container_id), "CREATED")
-            .expect("Unable to write firmware name to file.");
-        write(
-            format!("{HYBRID_DIR}/{}/pid", container_id),
-            pid.to_string(),
-        )
-        .expect("Unable to write firmware name to file.");
+            };
+            write(format!("{HYBRID_DIR}/{}/status", container_id), "CREATED")
+                .expect("Unable to write firmware name to file.");
 
-        publisher
-            .publish(
-                Context::default(),
-                "/tasks/create",
-                &ns,
-                Box::new(task.clone()),
+            write(
+                format!("{HYBRID_DIR}/{}/pid", container_id),
+                pid.to_string(),
             )
-            .expect("Can't create task");
+            .expect("Unable to write firmware name to file.");
+
+            publisher
+                .publish(
+                    Context::default(),
+                    "/tasks/create",
+                    &ns,
+                    Box::new(task.clone()),
+                )
+                .expect("Can't create task");
             resp.pid = pid;
             info!("create resp: {:?} with pid {:?}", resp, resp.pid);
             Ok(resp)
         }
     }
 
-
     #[tokio::main(flavor = "current_thread")]
-    async fn state(&self, _ctx: &TtrpcContext, request: StateRequest) -> TtrpcResult<StateResponse> {
+    async fn state(
+        &self,
+        _ctx: &TtrpcContext,
+        request: StateRequest,
+    ) -> TtrpcResult<StateResponse> {
         info!("State request for {:?}", &request);
         let address = self.address.clone();
         let ns = self.namespace.clone();
@@ -365,30 +379,26 @@ impl shim::Task for Service {
             .into_inner()
             .container
             .unwrap();
-        let name = current_container.clone().image;
+        let _name = current_container.clone().image;
         let mut resp = StateResponse::new();
-        if name.contains("pause") { 
-            resp.status = Status::RUNNING.into();
-            Ok(resp)
-        } else {
-            let pid = read_info(format!("{HYBRID_DIR}/{}/pid", request.id).as_str())
-                .parse::<u32>()
-                .unwrap();
-            let status = read_info(format!("{HYBRID_DIR}/{}/status", request.id).as_str());
-            resp.id = request.id;
-            resp.pid = pid;
-            resp.status = match status.as_str() {
-                "UNKNOWN" => Status::UNKNOWN.into(),
-                "CREATED" => Status::CREATED.into(),
-                "RUNNING" => Status::RUNNING.into(),
-                "STOPPED" => Status::STOPPED.into(),
-                "PAUSED" => Status::PAUSED.into(),
-                "PAUSING" => Status::PAUSING.into(),
-                _ => Status::UNKNOWN.into(),
-            };
-            info!("state {:?}", resp);
-            Ok(resp)
-        }
+        let pid = read_info(format!("{HYBRID_DIR}/{}/pid", request.id).as_str())
+            .parse::<u32>()
+            .unwrap();
+        let status = read_info(format!("{HYBRID_DIR}/{}/status", request.id).as_str());
+        resp.id = request.id;
+        resp.pid = pid;
+        resp.status = match status.as_str() {
+            "UNKNOWN" => Status::UNKNOWN.into(),
+            "CREATED" => Status::CREATED.into(),
+            "RUNNING" => Status::RUNNING.into(),
+            "STOPPED" => Status::STOPPED.into(),
+            "PAUSED" => Status::PAUSED.into(),
+            "PAUSING" => Status::PAUSING.into(),
+            _ => Status::UNKNOWN.into(),
+        };
+        info!("state {:?}", resp);
+        Ok(resp)
+        //}
     }
 
     fn wait(&self, _ctx: &TtrpcContext, req: WaitRequest) -> TtrpcResult<WaitResponse> {
@@ -427,15 +437,17 @@ impl shim::Task for Service {
         let name = container.clone().image;
         let mut resp = StartResponse::new();
         if name.contains("pause") {
+            resp.pid = read_info(format!("{HYBRID_DIR}/{}/pid", request.id).as_str())
+                .parse::<u32>()
+                .unwrap();
             info!("start {:?}", resp);
             Ok(resp)
         } else {
             let labels = container.labels;
-
             let mcu_path = labels.get("MCU path").unwrap();
             let firmware_name = labels.get("Firmware name").unwrap();
             let _ = File::create(format!("{HYBRID_DIR}/{}", container.id.clone()));
-    
+
             match check_status(format!("{mcu_path}/{STATE_FILE}").as_str()).unwrap() {
                 FirmwareStatus::Offline => {
                     write(format!("{mcu_path}/{FIRMWARE_FILE}"), firmware_name)
@@ -449,12 +461,13 @@ impl shim::Task for Service {
                     panic!("Can't start container, a firmware is already running.")
                 }
             }
-    
+            write(format!("{HYBRID_DIR}/created"), "CREATED")
+                .expect("Unable to write firmware name to file.");
             Command::new(format!("{CONSOLE_RPMSG}"))
                 .arg(format!("{HYBRID_DIR}/{0}/{0}.log", container.id.clone()))
                 .spawn()
                 .expect("Failed to run rpmsg console");
-    
+
             let pid = read_info(format!("{HYBRID_DIR}/{}/pid", request.id).as_str())
                 .parse::<u32>()
                 .unwrap();
@@ -466,8 +479,7 @@ impl shim::Task for Service {
                 ..Default::default()
             };
             let ttrpc_address = address + ".ttrpc";
-            let publisher =
-                RemotePublisher::new(ttrpc_address).expect("Connect failed");
+            let publisher = RemotePublisher::new(ttrpc_address).expect("Connect failed");
             publisher
                 .publish(
                     Context::default(),
@@ -476,8 +488,7 @@ impl shim::Task for Service {
                     Box::new(task.clone()),
                 )
                 .expect("Can't create task");
-    
-            
+
             resp.pid = pid;
             info!("{:?}", resp);
             Ok(resp)
@@ -501,14 +512,14 @@ impl shim::Task for Service {
 
         let ts = convert_to_timestamp(Some(OffsetDateTime::now_utc()));
         let task = TaskDelete {
-            container_id: request.id,
+            container_id: request.id.clone(),
             pid: pid,
+            exit_status: 0,
             exited_at: Some(ts.clone()).into(),
             ..Default::default()
         };
         let ttrpc_address = self.address.clone() + ".ttrpc";
-        let publisher =
-            RemotePublisher::new(ttrpc_address).expect("Connect failed");
+        let publisher = RemotePublisher::new(ttrpc_address).expect("Connect failed");
         publisher
             .publish(
                 Context::default(),
@@ -516,10 +527,16 @@ impl shim::Task for Service {
                 &ns,
                 Box::new(task.clone()),
             )
-            .expect("Can't create task");
-
+            .expect("Can't delete task");
         let mut resp = DeleteResponse::new();
         resp.pid = pid;
+        let cmd = format!("k3s ctr -n rm c {}", request.id.clone());
+        std::process::Command::new("ctr")
+                .arg("c")
+                .arg("rm")
+                .arg(request.id.clone())
+                .spawn()
+                .expect("failed to execute process");
         info!("delete resp {:?}", resp);
         Ok(resp)
     }
@@ -535,33 +552,60 @@ impl shim::Task for Service {
         info!("Kill request for {:?}", request);
         let ns = self.namespace.clone();
         let address = self.address.clone();
-        if request.signal == 15 {
+        let mut pause_kill = false;
+        let pause_check  = Path::new(format!("{HYBRID_DIR}/{}/pause", request.id).as_str()).exists()
+                                && Path::new(format!("{HYBRID_DIR}/created").as_str()).exists();
+        if pause_check {
+            info!("should kill pause container");
+            match check_status("/sys/class/remoteproc/remoteproc0/state").unwrap() {
+                FirmwareStatus::Offline => {
+                    info!("killing pause container");
+                    write(format!("{HYBRID_DIR}/{}/status", request.id), "STOPPED")
+                        .expect("Unable to write firmware name to file.");
+                    
+                    pause_kill = true;
+                    remove_file(format!("{HYBRID_DIR}/created"))
+                        .expect("couldn't remove created hybrid file.");
+                    info!("pause after deleted file {:?}", pause_kill);
+                }
+                FirmwareStatus::Running => (),
+            }
+        }
+        info!("pause kill: {:?}", pause_kill);
+        if (request.signal == 15) || (pause_kill) {
+            info!("kill:  write stop to status");
+
             write(format!("{HYBRID_DIR}/{}/status", request.id), "STOPPED")
                 .expect("Unable to write firmware name to file.");
-            let channel = containerd_client::connect(address)
-                .await
-                .expect("connect failed.");
-            let req = GetContainerRequest {
-                id: request.id.clone(),
-            };
-            let req: Request<GetContainerRequest> = with_namespace!(req, ns);
-            let container = ContainersClient::new(channel.clone())
-                .get(req)
-                .await
-                .expect("failed to get image")
-                .into_inner()
-                .container
-                .unwrap();
+            info!("kill:  write done");
 
-            let labels = container.labels;
-            let mcu_path = labels.get("MCU path").unwrap();
+            if !pause_kill {
+                let channel = containerd_client::connect(address)
+                    .await
+                    .expect("connect failed.");
+                let req = GetContainerRequest {
+                    id: request.id.clone(),
+                };
+                let req: Request<GetContainerRequest> = with_namespace!(req, ns);
+                let container = ContainersClient::new(channel.clone())
+                    .get(req)
+                    .await
+                    .expect("failed to get image")
+                    .into_inner()
+                    .container
+                    .unwrap();
+                let labels = container.labels;
+                let mcu_path = labels.get("MCU path").unwrap();
 
-            match check_status(format!("{mcu_path}/{STATE_FILE}").as_str()).unwrap() {
-                FirmwareStatus::Offline => (),
-                FirmwareStatus::Running => change_status(
-                    format!("{mcu_path}/{STATE_FILE}").as_str(),
-                    FirmwareStatus::Offline,
-                ),
+                match check_status(format!("{mcu_path}/{STATE_FILE}").as_str()).unwrap() {
+                    FirmwareStatus::Offline => (),
+                    FirmwareStatus::Running => change_status(
+                        format!("{mcu_path}/{STATE_FILE}").as_str(),
+                        FirmwareStatus::Offline,
+                    ),
+                }
+            } else {
+                remove_file(format!("{HYBRID_DIR}/created")).unwrap();
             }
             info!("Kill request for {:?} returns successfully", request);
         }
@@ -587,7 +631,6 @@ impl shim::Task for Service {
         Ok(api::Empty::default())
     }
 }
-
 
 fn main() {
     #[cfg(not(feature = "async"))]
