@@ -1,0 +1,30 @@
+#
+name: Create and publish hybrid-runtime binaries
+
+# Configures this workflow to run every time a release is created
+on:
+ release:
+    types: [published]
+
+#push:
+#    branches: ['main']
+
+jobs:
+  build_example:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Tar release
+        run: |
+          tar -cvf example.tar -C ${{ github.workspace }} example/
+          gzip example.tar
+          
+      - name: Release with Notes
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            example.tar.gz
+
