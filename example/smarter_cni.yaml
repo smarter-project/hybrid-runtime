@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: smartercniconfig
+  namespace: kube-system
+data:
+  CIDR: "172.39.0.0/16"
+  GW:   "172.39.0.1"
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  labels:
+    k8s-app: smarter-cni
+  name: smarter-cni
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      k8s-app: smarter-cni
+  template:
+    metadata:
+      annotations:
+        scheduler.alpha.kubernetes.io/critical-pod: ""
+      labels:
+        k8s-app: smarter-cni
+    spec:
+      nodeSelector:
+        smarter.cni: deploy
+      tolerations:
+        - key: "smarter.type"
+          operator: "Equal"
+          value: "edge"
+          effect: "NoSchedule"
+      containers:
+        - name: smarter-cni
+          image: ghcr.io/smarter-project/smarter-cni:v1.34.4
+          imagePullPolicy: Always
+          securityContext:
+            capabilities:
+              add:
+              - NET_ADMIN
+              - SYS_MODULE
+            privileged: true
+          volumeMounts:
+          - mountPath: /opt/cni
+            name: cni-path
+          - mountPath: /etc/cni
+            name: etc-cni-netd
+          - mountPath: /usr/libexec/cni
+            name: alt-cni-path
+          envFrom:
+          - configMapRef:
+              name: smartercniconfig
+      restartPolicy: Always
+      priorityClassName: system-node-critical
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+       - operator: Exists
+         effect: NoSchedule
+      volumes:
+      # To install cni plugin in the host
+      - hostPath:
+          path:  /opt/cni
+          type: DirectoryOrCreate
+        name: cni-path
+        # To install cni configuration in the host
+      - hostPath:
+          path: /etc/cni
+          type: DirectoryOrCreate
+        name: etc-cni-netd
+      - hostPath:
+          path:  /usr/libexec/cni
+        name: alt-cni-path
+---
