@@ -134,26 +134,33 @@ impl shim::Task for Service {
                 .arg(container_id.to_string())
                 .spawn()
                 .expect("failed to execute process");
+            info!("delete original pause");
             // create a new pause container using runc wiht the same ID
             std::process::Command::new("/usr/local/bin/pause.sh")
                 .arg(name)
                 .arg(container_id.to_string())
                 .spawn()
                 .expect("failed to execute process");
+            info!("container started using runc.");
             // get the actual pid of the container
-            let cmd = format!("ps aux | grep {} | awk", container_id.to_string()) + " '{print $1}'";
+            let cmd = format!("ps -e -o pid,cmd | grep {} | awk", container_id.to_string()) + " '{print $1}'";
             let output = std::process::Command::new("sh")
                 .arg("-c")
                 .arg(cmd)
                 .output()
                 .expect("Failed to execute command");
+            info!("command to retreive pid just ran.");
             let output = String::from_utf8(output.stdout).unwrap();
             let output = output.split('\n').next().unwrap();
+            info!("pid is {:?}", output);
+            info!("now creating pause file.");
             write(format!("{HYBRID_DIR}/{}/pause", container_id), output)
-                .expect("Unable to write firmware name to file.");
+                .expect("Unable to write pid to file.");
+            info!("pause file created.");
             resp.pid = output.parse::<u32>().unwrap();
             write(format!("{HYBRID_DIR}/{}/status", container_id), "RUNNING")
                 .expect("Unable to write status to file.");
+            info!("status file created.");
             let _ = write(format!("{HYBRID_DIR}/{}/pid", container_id), output);
             info!("create {:?}", resp);
             Ok(resp)
@@ -398,7 +405,6 @@ impl shim::Task for Service {
         };
         info!("state {:?}", resp);
         Ok(resp)
-        //}
     }
 
     fn wait(&self, _ctx: &TtrpcContext, req: WaitRequest) -> TtrpcResult<WaitResponse> {
@@ -530,13 +536,16 @@ impl shim::Task for Service {
             .expect("Can't delete task");
         let mut resp = DeleteResponse::new();
         resp.pid = pid;
-        let cmd = format!("k3s ctr -n rm c {}", request.id.clone());
+        info!("deleting container");
+        
         std::process::Command::new("ctr")
-                .arg("c")
-                .arg("rm")
-                .arg(request.id.clone())
-                .spawn()
-                .expect("failed to execute process");
+            .arg("-n")
+            .arg(ns)
+            .arg("c")
+            .arg("rm")
+            .arg(request.id.clone())
+            .spawn()
+            .expect("failed to execute process");
         info!("delete resp {:?}", resp);
         Ok(resp)
     }
