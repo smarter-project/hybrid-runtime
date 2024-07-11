@@ -1,5 +1,7 @@
 # Build Firmware container image + Hybrid Runtime CLI + Shim
 
+PS: if you don't want to build the runtime and container image, we provide the pre-built runtime and image as GitHub packages, just pull both of them.
+ 
 - Navigate to docker folder, [image.dockerfile](../docker/image.dockerfile) is a Dockerfile that builds a hello world app on top of freeRTOS. To build the image, [docker](https://docs.docker.com/engine/install/ubuntu/) and buildx (we're building an arm container image on an x86 machine) are required:
 
 
