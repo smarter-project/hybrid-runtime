@@ -6,5 +6,9 @@ There are 3 different ways to use the runtime, either standalone meaning interac
 
 The guides were tested on both an AVH model of i.MX8M Plus baord and the i.MX8M Mini board, we recommend using the AVH model model, they offer a 30 day free trial. 
 
-
+- [AVH model setup](./docs/AVH.md).
+- [Build Firmware container image + Hybrid Runtime CLI + Shim](./docs/build_instructions.md).
+- [Running container using hybrid runtime CLI](./docs/hybrid-runtime_standalone.md).
 - [Docs on the `hybrid-runtime` CLI](./docs/CLI.md)
+- [Running container using hybrid runtime + containerd](./docs/hybrid-runtime_containerd.md).
+- [Running container using hybrid runtime + k3s](./docs/hybrid-runtime_k3s.md).
