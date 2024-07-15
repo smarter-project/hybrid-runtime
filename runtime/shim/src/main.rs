@@ -1,5 +1,7 @@
 use crate::utils::{change_status, check_mcu_exists, check_status, read_info, FirmwareStatus};
 use containerd_client;
+use std::sync::Arc;
+
 use containerd_client::services::v1::{
     containers_client::ContainersClient, content_client::ContentClient,
     images_client::ImagesClient, Container, GetContainerRequest, GetImageRequest,
@@ -9,7 +11,7 @@ use containerd_client::tonic::Request;
 use containerd_client::with_namespace;
 use containerd_shim as shim;
 use futures::TryStreamExt;
-use log::info;
+use log::{error, info};
 use oci_spec::image::{ImageConfiguration, ImageManifest};
 use shim::{
     api,
@@ -27,8 +29,11 @@ use std::collections::HashMap;
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, remove_file, write, File};
 use std::path::Path;
 use std::process::Command;
-use std::sync::Arc;
 use time::OffsetDateTime;
+//use std::process::Stdio;
+use notify::{Config as notify_config, RecommendedWatcher, RecursiveMode, Watcher};
+use std::path::PathBuf;
+use std::sync::mpsc;
 
 mod utils;
 
@@ -79,7 +84,7 @@ impl shim::Shim for Service {
 }
 
 impl shim::Task for Service {
-    #[tokio::main(flavor = "current_thread")]
+    #[tokio::main]
     async fn create(
         &self,
         _ctx: &TtrpcContext,
@@ -128,7 +133,7 @@ impl shim::Task for Service {
         if name.contains("pause") {
             info!("found a pause container");
             // delete the pause container that was created using the hybrid-runtime
-            std::process::Command::new("ctr")
+            Command::new("ctr")
                 .arg("c")
                 .arg("rm")
                 .arg(container_id.to_string())
@@ -136,32 +141,67 @@ impl shim::Task for Service {
                 .expect("failed to execute process");
             info!("delete original pause");
             // create a new pause container using runc wiht the same ID
-            std::process::Command::new("/usr/local/bin/pause.sh")
+            Command::new("/usr/local/bin/pause.sh")
                 .arg(name)
                 .arg(container_id.to_string())
                 .spawn()
                 .expect("failed to execute process");
+
             info!("container started using runc.");
-            // get the actual pid of the container
-            let cmd = format!("ps -e -o pid,cmd | grep {} | awk", container_id.to_string()) + " '{print $1}'";
-            let output = std::process::Command::new("sh")
+
+            let cmd = format!(
+                "echo $(ps -e -o pid,cmd | grep {} | awk",
+                container_id.to_string()
+            ) + " 'NR==1{print $1}') > ";
+            let pause_cmd = cmd.clone() + format!("{HYBRID_DIR}/{}/pause", container_id).as_str();
+            info!("command being executed {:?}", pause_cmd.clone());
+            Command::new("sh")
                 .arg("-c")
-                .arg(cmd)
-                .output()
-                .expect("Failed to execute command");
-            info!("command to retreive pid just ran.");
-            let output = String::from_utf8(output.stdout).unwrap();
-            let output = output.split('\n').next().unwrap();
-            info!("pid is {:?}", output);
-            info!("now creating pause file.");
-            write(format!("{HYBRID_DIR}/{}/pause", container_id), output)
-                .expect("Unable to write pid to file.");
-            info!("pause file created.");
-            resp.pid = output.parse::<u32>().unwrap();
+                .arg(pause_cmd)
+                .spawn()
+                .expect("failed to execute process");
+            let (tx, rx) = mpsc::channel();
+            let mut watcher = RecommendedWatcher::new(tx, notify_config::default()).unwrap();
+            let file_path = PathBuf::from(format!("{HYBRID_DIR}/{}/pause", container_id));
+            let file_dir = file_path.parent().unwrap();
+            info!("file dir (should be parent) {:?}", file_dir);
+            watcher
+                .watch(&file_dir, RecursiveMode::NonRecursive)
+                .unwrap();
+            if !file_path.exists() {
+                for res in rx {
+                    match res {
+                        Ok(notify::event::Event {
+                            kind: notify::event::EventKind::Create(_),
+                            paths: p,
+                            ..
+                        }) => {
+                            info!("A file was created: {p:?}");
+                            if p.first() == Some(&file_path) {
+                                info!("pause file was found");
+                                break;
+                            }
+                        }
+                        Ok(_) => continue,
+                        Err(error) => error!("Error: {error:?}"),
+                    }
+                }
+            }
+            watcher.unwatch(file_dir).unwrap();
+
+            let pid = read_info(format!("{HYBRID_DIR}/{}/pause", request.id).as_str())
+                .parse::<u32>()
+                .unwrap();
+            write(
+                format!("{HYBRID_DIR}/{}/pid", container_id),
+                pid.to_string(),
+            )
+            .expect("Unable to write status to file.");
+            info!("we are sure the file exists");
             write(format!("{HYBRID_DIR}/{}/status", container_id), "RUNNING")
                 .expect("Unable to write status to file.");
-            info!("status file created.");
-            let _ = write(format!("{HYBRID_DIR}/{}/pid", container_id), output);
+            resp.pid = pid;
+            info!("pid from main {}", resp.pid);
             info!("create {:?}", resp);
             Ok(resp)
         } else {
@@ -241,12 +281,16 @@ impl shim::Task for Service {
                                                                 board.to_string(),
                                                             );
                                                         } else {
+                                                            error!("Image board name label does not match the current board");
                                                             panic!("Image board name label does not match the current board");
                                                             //return Err("Image board name label does not match the current board".to_string());
                                                         }
                                                     }
                                                 }
                                                 None => {
+                                                    error!(
+                                                        "board label not set in container image."
+                                                    );
                                                     panic!(
                                                         "board label not set in container image."
                                                     );
@@ -275,6 +319,7 @@ impl shim::Task for Service {
                                                     //return Err(
                                                     //    "MCU label not set in container image.".to_string()
                                                     //)
+                                                    error!("MCU label not set in container image.");
                                                     panic!("MCU label not set in container image.");
                                                 }
                                             };
@@ -284,23 +329,31 @@ impl shim::Task for Service {
                                                 "No labels specified. Can't match board name and MCU."
                                                     .to_string(),
                                             )*/
-                                            panic!(
-                                                "no labels specified. can't match board naem and MCU."
-                                            );
+                                            error!("no labels specified. can't match board naem and MCU.");
+                                            panic!("no labels specified. can't match board naem and MCU.");
                                         }
                                     };
                                 }
-                                None => panic!("couldn't find config."), //return Err("Couldnt find config".to_string()),
+                                None => {
+                                    error!("couldn't find config.");
+                                    panic!("couldn't find config."); //return Err("Couldnt find config".to_string()),
+                                }
                             };
                         }
-                        Err(_) => panic!("couldn't read blob content."), //return Err("couldnt read blob content".to_string()),
+                        Err(_) => {
+                            error!("couldn't read blob content.");
+                            panic!("couldn't read blob content."); //return Err("couldnt read blob content".to_string()),
+                        }
                     }
                     // need to update where remoteproc looks for firmware
                     write(REMOTEPROC_PATH, firmware_path)
                         .expect("Couldn't update firmware default location.");
                     container_labels.insert("Firmware path".to_string(), firmware_path.to_string());
                 }
-                Err(_) => panic!("failed to read image manifest."), //return Err("failed to read image manifest".to_string()),
+                Err(_) => {
+                    error!("failed to read image manifest.");
+                    panic!("failed to read image manifest."); //return Err("failed to read image manifest".to_string()),
+                }
             }
 
             // update current container
@@ -443,7 +496,7 @@ impl shim::Task for Service {
         let name = container.clone().image;
         let mut resp = StartResponse::new();
         if name.contains("pause") {
-            resp.pid = read_info(format!("{HYBRID_DIR}/{}/pid", request.id).as_str())
+            resp.pid = read_info(format!("{HYBRID_DIR}/{}/pause", request.id).as_str())
                 .parse::<u32>()
                 .unwrap();
             info!("start {:?}", resp);
@@ -513,9 +566,6 @@ impl shim::Task for Service {
             .parse::<u32>()
             .unwrap();
 
-        remove_dir_all(format!("{HYBRID_DIR}/{}", request.id.clone()))
-            .expect("Failed to delete container resources (logs).");
-
         let ts = convert_to_timestamp(Some(OffsetDateTime::now_utc()));
         let task = TaskDelete {
             container_id: request.id.clone(),
@@ -537,7 +587,6 @@ impl shim::Task for Service {
         let mut resp = DeleteResponse::new();
         resp.pid = pid;
         info!("deleting container");
-        
         std::process::Command::new("ctr")
             .arg("-n")
             .arg(ns)
@@ -546,6 +595,23 @@ impl shim::Task for Service {
             .arg(request.id.clone())
             .spawn()
             .expect("failed to execute process");
+        // if pause container, delete pod
+        if Path::new(format!("{HYBRID_DIR}/{}/pause", request.id).as_str()).exists() {
+            remove_dir_all(format!(
+                "/var/lib/containerd/io.containerd.grpc.v1.cri/sandboxes/{}",
+                request.id.clone()
+            ))
+            .expect("Failed to delete container resources (logs).");
+
+            std::process::Command::new("crictl")
+                .arg("rmp")
+                .arg(request.id.clone())
+                .spawn()
+                .expect("failed to execute process");
+        }
+
+        remove_dir_all(format!("{HYBRID_DIR}/{}", request.id.clone()))
+            .expect("Failed to delete container resources (logs).");
         info!("delete resp {:?}", resp);
         Ok(resp)
     }
@@ -562,8 +628,8 @@ impl shim::Task for Service {
         let ns = self.namespace.clone();
         let address = self.address.clone();
         let mut pause_kill = false;
-        let pause_check  = Path::new(format!("{HYBRID_DIR}/{}/pause", request.id).as_str()).exists()
-                                && Path::new(format!("{HYBRID_DIR}/created").as_str()).exists();
+        let pause_check = Path::new(format!("{HYBRID_DIR}/{}/pause", request.id).as_str()).exists()
+            && Path::new(format!("{HYBRID_DIR}/created").as_str()).exists();
         if pause_check {
             info!("should kill pause container");
             match check_status("/sys/class/remoteproc/remoteproc0/state").unwrap() {
@@ -571,7 +637,7 @@ impl shim::Task for Service {
                     info!("killing pause container");
                     write(format!("{HYBRID_DIR}/{}/status", request.id), "STOPPED")
                         .expect("Unable to write firmware name to file.");
-                    
+
                     pause_kill = true;
                     remove_file(format!("{HYBRID_DIR}/created"))
                         .expect("couldn't remove created hybrid file.");
